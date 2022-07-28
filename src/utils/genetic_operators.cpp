@@ -143,6 +143,37 @@ std::pair<vector_double, vector_double> sbx_crossover_impl(const vector_double &
     return std::make_pair(std::move(child1), std::move(child2));
 }
 
+std::pair<vector_double, vector_double>
+sbx_crossover_discrete_impl(const vector_double &parent1, const vector_double &parent2,
+                            const double p_cr, detail::random_engine_type &random_engine)
+{
+    // Decision vector dimensions
+    auto nx = parent1.size();
+
+    vector_double::size_type site1, site2;
+    // Initialize the child decision vectors
+    vector_double child1 = parent1;
+    vector_double child2 = parent2;
+    // Random distributions
+    std::uniform_real_distribution<> drng(0., 1.); // to generate a number in [0, 1)
+
+    // This implements a Simulated Binary Crossover SBX
+    if (drng(random_engine) < p_cr) { // No crossever at all will happen with probability p_cr
+        // This implements two-points crossover and applies it to the integer part of the chromosome.
+        std::uniform_int_distribution<vector_double::size_type> ra_num(0, nx - 1u);
+        site1 = ra_num(random_engine);
+        site2 = ra_num(random_engine);
+        if (site1 > site2) {
+            std::swap(site1, site2);
+        }
+        for (decltype(site2) j = site1; j <= site2; ++j) {
+            child1[j] = parent2[j];
+            child2[j] = parent1[j];
+        }
+    }
+    return std::make_pair(std::move(child1), std::move(child2));
+}
+
 // Performs polynomial mutation. Requires all sizes to be consistent. Does not check if input is well formed.
 // p_m is the mutation probability, eta_m the distibution index
 void polynomial_mutation_impl(vector_double &child, const std::pair<vector_double, vector_double> &bounds,
@@ -191,6 +222,26 @@ void polynomial_mutation_impl(vector_double &child, const std::pair<vector_doubl
         if (drng(random_engine) < p_m) {
             // We need to draw a random integer in [lb, ub].
             auto mutated = uniform_integral_from_range(lb[j], ub[j], random_engine);
+            child[j] = mutated;
+        }
+    }
+}
+
+// Performs polynomial mutation from discrete variables.
+// p_m is the mutation probability, eta_m the distibution index
+void polynomial_mutation_discrete_impl(vector_double &child, const std::vector<vector_double> &discrete_variables,
+                                       const double p_m, detail::random_engine_type &random_engine)
+{
+    // Decision vector dimensions
+    auto nx = child.size();
+    // Random distributions
+    std::uniform_real_distribution<> drng(0., 1.); // to generate a number in [0, 1)
+
+    // This implements the integer mutation for an individual
+    for (decltype(nx) j = 0u; j < nx; ++j) {
+        if (drng(random_engine) < p_m) {
+            // We need to draw a random real in discrete_variables.
+            auto mutated = uniform_real_from_discrete(discrete_variables[j], random_engine);
             child[j] = mutated;
         }
     }
@@ -335,6 +386,50 @@ void polynomial_mutation(vector_double &dv, const std::pair<vector_double, vecto
                     "Mutation distribution index is not finite, value is: " + std::to_string(eta_m));
     }
     return detail::polynomial_mutation_impl(dv, bounds, nix, p_m, eta_m, random_engine);
+}
+
+/// Polynomial mutation (discrete)
+/**
+ * This function performs the polynomial mutation proposed by Agrawal and Deb over some chromosome.
+ *
+ * @see https://www.egr.msu.edu/~kdeb/papers/k2012016.pdf
+ *
+ * @param dv chromosome to be mutated.
+ * @param discrete_variables problem discrete variables.
+ * @param p_m mutation probability.
+ * @param eta_m mutation distribution index (siggested to be in [20, 100]).
+ * @param random_engine the pagmo random engine
+ *
+ * @throws std::invalid_argument if:
+ * - the *discrete_variables* size is zero.
+ * - inconsistent lengths of *child* and *discrete_variables*.
+ * - nans or infs in the discrete_variables.
+ * - mutation probability or distribution index are not finite numbers.
+ */
+void polynomial_mutation_discrete(vector_double &dv, const std::vector<vector_double> &discrete_variables,
+                                  const double p_m, detail::random_engine_type &random_engine)
+{
+    detail::check_problem_discrete_variables(discrete_variables);
+    if (dv.size() != discrete_variables.size()) {
+        pagmo_throw(
+            std::invalid_argument,
+            "The length of the chromosome should be the same as that of the discrete variables: detected length is "
+                + std::to_string(dv.size()) + ", while the discrete variables length is "
+                + std::to_string(discrete_variables.size()));
+    }
+    for (decltype(discrete_variables.size()) i = 0u; i < discrete_variables.size(); ++i) {
+        for (const auto v : discrete_variables[i]) {
+            if (!std::isfinite(v)) {
+                pagmo_throw(std::invalid_argument,
+                            "Infinite value detected in the discrete_variables at position: " + std::to_string(i)
+                                + ". Cannot perform Simulated Binary Crossover.");
+            }
+        }
+    }
+    if (!std::isfinite(p_m)) {
+        pagmo_throw(std::invalid_argument, "Mutation probability is not finite, value is: " + std::to_string(p_m));
+    }
+    return detail::polynomial_mutation_discrete_impl(dv, discrete_variables, p_m, random_engine);
 }
 
 } // namespace pagmo

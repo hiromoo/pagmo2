@@ -60,6 +60,8 @@ struct PAGMO_DLL_PUBLIC null_problem {
     vector_double fitness(const vector_double &) const;
     // Problem bounds.
     std::pair<vector_double, vector_double> get_bounds() const;
+    // Problem discrete variables.
+    std::vector<vector_double> get_discrete_variables() const;
     /// Number of objectives.
     /**
      * @return the number of objectives of the problem (as specified upon construction).

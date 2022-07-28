@@ -230,6 +230,7 @@ set(PAGMO_SRC_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/simulated_annealing.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/moead.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/nsga2.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/nsga2_discrete.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/gaco.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/de1220.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/gwo.cpp"

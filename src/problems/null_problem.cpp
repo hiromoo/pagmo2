@@ -69,6 +69,15 @@ std::pair<vector_double, vector_double> null_problem::get_bounds() const
     return {{0.}, {1.}};
 }
 
+/// Problem bounds.
+/**
+ * @return the vector <tt>([.5,1.5],[2.5,3.5])</tt>.
+ */
+std::vector<vector_double> null_problem::get_discrete_variables() const
+{
+    return {{.5,1.5},{2.5,3.5}};
+}
+
 // Serialization
 template <typename Archive>
 void null_problem::serialize(Archive &ar, unsigned)

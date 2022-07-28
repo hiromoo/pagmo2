@@ -139,6 +139,27 @@ inline void uniform_integral_from_range_checks(double lb, double ub)
     }
 }
 
+// Check that the discrete variables are suitable for the
+// generation of an real number. The boolean flags specify at
+// compile time which checks to run.
+template <bool FiniteCheck>
+inline void uniform_real_from_discrete_checks(vector_double discrete_variables)
+{
+    // 0 - Check for finite bounds.
+    if (FiniteCheck) {
+        for (const auto &v : discrete_variables) {
+            if (!std::isfinite(v)) {
+                pagmo_throw(std::invalid_argument,
+                            "Cannot generate a random real if the discrete variables are not finite");
+            }
+        }
+    } else {
+        for (const auto &v : discrete_variables) {
+            assert(std::isfinite(v));
+        }
+    }
+}
+
 // Implementation of the uniform_integral_from_range() function.
 template <bool FiniteCheck, bool LbUbCheck, bool IntCheck, typename Rng>
 inline double uniform_integral_from_range_impl(double lb, double ub, Rng &r_engine)
@@ -161,6 +182,17 @@ inline double uniform_integral_from_range_impl(double lb, double ub, Rng &r_engi
     // NOTE: it should be safe here to do a raw cast, as the result
     // will be within the original bounds and thus representable by double.
     return static_cast<double>(std::uniform_int_distribution<long long>(l, u)(r_engine));
+}
+
+// Implementation of the uniform_real_from_discrete() function.
+template <bool FiniteCheck, typename Rng>
+inline double uniform_real_from_discrete_impl(vector_double discrete_variables, Rng &r_engine)
+{
+    // Run the checks on the discrete variables.
+    uniform_real_from_discrete_checks<FiniteCheck>(discrete_variables);
+    auto idx = std::uniform_int_distribution<std::vector<double>::size_type>(
+        0, static_cast<unsigned long>(discrete_variables.size() - 1))(r_engine);
+    return discrete_variables[idx];
 }
 
 } // namespace detail
@@ -213,6 +245,25 @@ inline double uniform_integral_from_range(double lb, double ub, Rng &r_engine)
 {
     // Activate all checks on lb/ub.
     return detail::uniform_integral_from_range_impl<true, true, true>(lb, ub, r_engine);
+}
+
+/// Generate a random real number within some discrete variables
+/**
+ * This function will create a random real number from discrete variables.
+ *
+ * @param discrete_variables discrete variables
+ * @param r_engine a C++ random engine
+ *
+ * @throws std::invalid_argument if:
+ * - the bounds are not finite.
+ *
+ * @returns a random real value
+ */
+template <typename Rng>
+inline double uniform_real_from_discrete(vector_double discrete_variables, Rng &r_engine)
+{
+    // Activate all checks on discrete variables.
+    return detail::uniform_real_from_discrete_impl<true>(discrete_variables, r_engine);
 }
 
 /// Generate a random real number within some lower and upper bounds
@@ -278,20 +329,27 @@ inline vector_double random_decision_vector(const problem &prob, Rng &r_engine)
     const auto ncx = nx - prob.get_nix();
     const auto &lb = prob.get_lb();
     const auto &ub = prob.get_ub();
+    const auto &discrete_variables = prob.get_discrete_variables();
 
-    // Continuous part.
-    for (vector_double::size_type i = 0u; i < ncx; ++i) {
-        // NOTE: the lb<=ub check is not needed, as it is ensured by the problem class.
-        // Still need to check for finiteness and range.
-        out[i] = detail::uniform_real_from_range_impl<true, false, true>(lb[i], ub[i], r_engine);
-    }
+    if (!prob.has_discrete_variables()) {
+        // Continuous part.
+        for (vector_double::size_type i = 0u; i < ncx; ++i) {
+            // NOTE: the lb<=ub check is not needed, as it is ensured by the problem class.
+            // Still need to check for finiteness and range.
+            out[i] = detail::uniform_real_from_range_impl<true, false, true>(lb[i], ub[i], r_engine);
+        }
 
-    // Integer part.
-    for (auto i = ncx; i < nx; ++i) {
-        // NOTE: the lb<=ub check and the check that lb/ub are integral values are not needed,
-        // as they are ensured by the problem class.
-        // Still need to check for finiteness.
-        out[i] = detail::uniform_integral_from_range_impl<true, false, false>(lb[i], ub[i], r_engine);
+        // Integer part.
+        for (auto i = ncx; i < nx; ++i) {
+            // NOTE: the lb<=ub check and the check that lb/ub are integral values are not needed,
+            // as they are ensured by the problem class.
+            // Still need to check for finiteness.
+            out[i] = detail::uniform_integral_from_range_impl<true, false, false>(lb[i], ub[i], r_engine);
+        }
+    } else {
+        for (auto i = 0u; i < nx; ++i) {
+            out[i] = detail::uniform_real_from_discrete_impl<true>(discrete_variables[i], r_engine);
+        }
     }
 
     return out;

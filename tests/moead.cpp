@@ -136,7 +136,7 @@ struct mo_many {
     }
 };
 
-struct mo_equal_bounds {
+struct mo {
     /// Fitness
     vector_double fitness(const vector_double &) const
     {
@@ -181,7 +181,7 @@ BOOST_AUTO_TEST_CASE(moead_evolve_test)
 
     // We then check that the method evolve fails when called on unsuitable problems (populations)
     // Some bound is equal
-    BOOST_CHECK_THROW(moead{10u}.evolve(population{problem{mo_equal_bounds{}}, 0u}), std::invalid_argument);
+    BOOST_CHECK_THROW(moead{10u}.evolve(population{problem{mo{}}, 0u}), std::invalid_argument);
     // Empty population.
     BOOST_CHECK_THROW(moead{10u}.evolve(population{problem{rosenbrock{}}, 0u}), std::invalid_argument);
     // Single objective problem

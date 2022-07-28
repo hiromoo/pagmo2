@@ -144,6 +144,51 @@ public:
     static constexpr bool value = implementation_defined;
 };
 
+/// Detect \p get_discrete_variables() method.
+/**
+ * This type trait will be \p true if \p T provides a method with
+ * the following signature:
+ * @code{.unparsed}
+ * std::vector<vector_double> get_discrete_variables() const;
+ * @endcode
+ * The \p get_discrete_variables() method is part of the interface for the definition of a problem
+ * (see pagmo::problem).
+ */
+template <typename T>
+class has_discrete_variables
+{
+    template <typename U>
+    using get_discrete_variables_t = decltype(std::declval<const U &>().get_discrete_variables());
+    static const bool implementation_defined
+        = std::is_same<std::vector<vector_double>, detected_t<get_discrete_variables_t, T>>::value;
+
+public:
+    /// Value of the type trait.
+    static constexpr bool value = implementation_defined;
+};
+
+/// Detect \p has_discrete_variables() method.
+/**
+ * This type trait will be \p true if \p T provides a method with
+ * the following signature:
+ * @code{.unparsed}
+ * bool has_discrete_variables() const;
+ * @endcode
+ * The \p has_discrete_variables() method is part of the interface for the definition of a problem
+ * (see pagmo::problem).
+ */
+template <typename T>
+class override_has_discrete_variables
+{
+    template <typename U>
+    using has_discrete_variables_t = decltype(std::declval<const U &>().has_discrete_variables());
+    static const bool implementation_defined = std::is_same<bool, detected_t<has_discrete_variables_t, T>>::value;
+
+public:
+    /// Value of the type trait.
+    static constexpr bool value = implementation_defined;
+};
+
 /// Detect \p get_nec() method.
 /**
  * This type trait will be \p true if \p T provides a method with
@@ -461,6 +506,8 @@ namespace detail
 PAGMO_DLL_PUBLIC void check_problem_bounds(const std::pair<vector_double, vector_double> &bounds,
                                            vector_double::size_type nix = 0u);
 
+void check_problem_discrete_variables(const std::vector<vector_double> &discrete_variables);
+
 PAGMO_DLL_PUBLIC sparsity_pattern dense_hessian(vector_double::size_type);
 
 PAGMO_DLL_PUBLIC std::vector<sparsity_pattern> dense_hessians(vector_double::size_type, vector_double::size_type);
@@ -483,6 +530,8 @@ struct PAGMO_DLL_PUBLIC_INLINE_CLASS prob_inner_base {
     virtual bool has_hessians_sparsity() const = 0;
     virtual vector_double::size_type get_nobj() const = 0;
     virtual std::pair<vector_double, vector_double> get_bounds() const = 0;
+    virtual std::vector<vector_double> get_discrete_variables() const = 0;
+    virtual bool has_discrete_variables() const = 0;
     virtual vector_double::size_type get_nec() const = 0;
     virtual vector_double::size_type get_nic() const = 0;
     virtual vector_double::size_type get_nix() const = 0;
@@ -529,6 +578,14 @@ struct PAGMO_DLL_PUBLIC_INLINE_CLASS prob_inner final : prob_inner_base {
         return m_value.get_bounds();
     }
     // optional methods
+    std::vector<vector_double> get_discrete_variables() const final
+    {
+        return get_discrete_variables_impl(m_value);
+    }
+    bool has_discrete_variables() const final
+    {
+        return has_discrete_variables_impl(m_value);
+    }
     vector_double batch_fitness([[maybe_unused]] const vector_double &dv) const final
     {
         if constexpr (pagmo::has_batch_fitness<T>::value) {
@@ -620,6 +677,38 @@ struct PAGMO_DLL_PUBLIC_INLINE_CLASS prob_inner final : prob_inner_base {
         return get_thread_safety_impl(m_value);
     }
     // Implementation of the optional methods.
+    template <typename U, enable_if_t<pagmo::has_discrete_variables<U>::value, int> = 0>
+    static std::vector<vector_double> get_discrete_variables_impl(const U &value)
+    {
+        return value.get_discrete_variables();
+    }
+    template <typename U, enable_if_t<!pagmo::has_discrete_variables<U>::value, int> = 0>
+    [[noreturn]] static std::vector<vector_double> get_discrete_variables_impl(const U &value)
+    {
+        pagmo_throw(not_implemented_error,
+                    "The discrete variables has been requested, but it is not implemented in a UDP of type '"
+                        + get_name_impl(value) + "'");
+    }
+    template <typename U, enable_if_t<detail::conjunction<pagmo::has_discrete_variables<U>,
+                                                          pagmo::override_has_discrete_variables<U>>::value,
+                                      int> = 0>
+    static bool has_discrete_variables_impl(const U &p)
+    {
+        return p.has_discrete_variables();
+    }
+    template <typename U,
+              enable_if_t<detail::conjunction<pagmo::has_discrete_variables<U>,
+                                              detail::negation<pagmo::override_has_discrete_variables<U>>>::value,
+                          int> = 0>
+    static bool has_discrete_variables_impl(const U &)
+    {
+        return true;
+    }
+    template <typename U, enable_if_t<!pagmo::has_discrete_variables<U>::value, int> = 0>
+    static bool has_discrete_variables_impl(const U &)
+    {
+        return false;
+    }
     template <typename U, enable_if_t<has_get_nobj<U>::value, int> = 0>
     static vector_double::size_type get_nobj_impl(const U &value)
     {
@@ -1312,11 +1401,11 @@ public:
     /// Dimension.
     /**
      * @return \f$ n_{x}\f$, the dimension of the problem as established
-     * by the length of the bounds returned by problem::get_bounds().
+     * by the length of the bounds returned by problem::get_bounds() or problem::get_discrete_variables().
      */
     vector_double::size_type get_nx() const
     {
-        return m_lb.size();
+        return !m_has_discrete_variables ? m_lb.size() : m_discrete_variables.size();
     }
 
     /// Integer Dimension.
@@ -1356,6 +1445,36 @@ public:
 
     // Box-bounds.
     std::pair<vector_double, vector_double> get_bounds() const;
+
+    // Discrete variables.
+    std::vector<vector_double> get_discrete_variables() const;
+
+    /// Check if the discrete variables is available in the UDP.
+    /**
+     * This method will return \p true if the discrete variables is available in the UDP, \p false otherwise.
+     *
+     * The availability of the discrete variables is determined as follows:
+     * - if the UDP does not satisfy pagmo::has_discrete_variables, then this method will always return \p false;
+     * - if the UDP satisfies pagmo::has_discrete_variables but it does not satisfy
+     *   pagmo::override_has_discrete_variables, then this method will always return \p true;
+     * - if the UDP satisfies both pagmo::has_discrete_variables and pagmo::override_has_discrete_variables,
+     *   then this method will return the output of the <tt>%has_discrete_variables()</tt> method of the UDP.
+     *
+     * \verbatim embed:rst:leading-asterisk
+     * .. note::
+     *
+     *    Regardless of what this method returns, the :cpp:func:`problem::discrete_variables()` method will always
+     * return a vector of sparsity patterns: if the UDP does not provide the discrete variables, PaGMO will assume that
+     * the sparsity pattern of the hessians is dense. See :cpp:func:`problem::discrete_variables()` for more details.
+     *
+     * \endverbatim
+     *
+     * @return a flag signalling the availability of the discrete variables in the UDP.
+     */
+    bool has_discrete_variables() const
+    {
+        return m_has_discrete_variables;
+    }
 
     /// Lower bounds.
     /**
@@ -1661,11 +1780,13 @@ private:
     // able to assign and deserialise problems.
     vector_double m_lb;
     vector_double m_ub;
+    std::vector<vector_double> m_discrete_variables;
     vector_double::size_type m_nobj;
     vector_double::size_type m_nec;
     vector_double::size_type m_nic;
     vector_double::size_type m_nix;
     vector_double m_c_tol;
+    bool m_has_discrete_variables;
     bool m_has_batch_fitness;
     bool m_has_gradient;
     bool m_has_gradient_sparsity;

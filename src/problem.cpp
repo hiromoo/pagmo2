@@ -108,6 +108,14 @@ void check_problem_bounds(const std::pair<vector_double, vector_double> &bounds,
     }
 }
 
+void check_problem_discrete_variables(const std::vector<vector_double> &discrete_variables)
+{
+    // 0 - Check that the size is at least 1.
+    if (discrete_variables.size() == 0u) {
+        pagmo_throw(std::invalid_argument, "The discrete variables dimension cannot be zero");
+    }
+}
+
 // Helper functions to compute sparsity patterns in the dense case.
 // A single dense hessian (lower triangular symmetric matrix).
 sparsity_pattern dense_hessian(vector_double::size_type dim)
@@ -154,17 +162,22 @@ problem::problem() : problem(null_problem{}) {}
 void problem::generic_ctor_impl()
 {
     // 0 - Integer part
-    const auto tmp_size = ptr()->get_bounds().first.size();
+    const auto tmp_size
+        = !ptr()->has_discrete_variables() ? ptr()->get_bounds().first.size() : ptr()->get_discrete_variables().size();
     m_nix = ptr()->get_nix();
     if (m_nix > tmp_size) {
         pagmo_throw(std::invalid_argument, "The integer part of the problem (" + std::to_string(m_nix)
                                                + ") is larger than its dimension (" + std::to_string(tmp_size) + ")");
     }
-    // 1 - Bounds.
+    // 1 - Bounds or discrete variables.
     auto bounds = ptr()->get_bounds();
     detail::check_problem_bounds(bounds, m_nix);
     m_lb = std::move(bounds.first);
     m_ub = std::move(bounds.second);
+
+    auto discrete_variables = ptr()->get_discrete_variables();
+    detail::check_problem_discrete_variables(discrete_variables);
+    m_discrete_variables = std::move(discrete_variables);
     // 2 - Number of objectives.
     m_nobj = ptr()->get_nobj();
     if (!m_nobj) {
@@ -183,6 +196,7 @@ void problem::generic_ctor_impl()
     if (m_nic > std::numeric_limits<vector_double::size_type>::max() / 3u) {
         pagmo_throw(std::invalid_argument, "The number of inequality constraints is too large");
     }
+    m_has_discrete_variables = ptr()->has_discrete_variables();
     // 4 - Presence of batch_fitness().
     // NOTE: all these m_has_* attributes refer to the presence of the features in the UDP.
     m_has_batch_fitness = ptr()->has_batch_fitness();
@@ -253,7 +267,8 @@ problem::problem(const problem &other)
     : m_ptr(other.ptr()->clone()), m_fevals(other.m_fevals.load(std::memory_order_relaxed)),
       m_gevals(other.m_gevals.load(std::memory_order_relaxed)),
       m_hevals(other.m_hevals.load(std::memory_order_relaxed)), m_lb(other.m_lb), m_ub(other.m_ub),
-      m_nobj(other.m_nobj), m_nec(other.m_nec), m_nic(other.m_nic), m_nix(other.m_nix), m_c_tol(other.m_c_tol),
+      m_discrete_variables(other.m_discrete_variables), m_nobj(other.m_nobj), m_nec(other.m_nec), m_nic(other.m_nic),
+      m_nix(other.m_nix), m_c_tol(other.m_c_tol), m_has_discrete_variables(other.m_has_discrete_variables),
       m_has_batch_fitness(other.m_has_batch_fitness), m_has_gradient(other.m_has_gradient),
       m_has_gradient_sparsity(other.m_has_gradient_sparsity), m_has_hessians(other.m_has_hessians),
       m_has_hessians_sparsity(other.m_has_hessians_sparsity), m_has_set_seed(other.m_has_set_seed),
@@ -269,8 +284,9 @@ problem::problem(problem &&other) noexcept
     : m_ptr(std::move(other.m_ptr)), m_fevals(other.m_fevals.load(std::memory_order_relaxed)),
       m_gevals(other.m_gevals.load(std::memory_order_relaxed)),
       m_hevals(other.m_hevals.load(std::memory_order_relaxed)), m_lb(std::move(other.m_lb)),
-      m_ub(std::move(other.m_ub)), m_nobj(other.m_nobj), m_nec(other.m_nec), m_nic(other.m_nic), m_nix(other.m_nix),
-      m_c_tol(std::move(other.m_c_tol)), m_has_batch_fitness(other.m_has_batch_fitness),
+      m_ub(std::move(other.m_ub)), m_discrete_variables(std::move(other.m_discrete_variables)), m_nobj(other.m_nobj),
+      m_nec(other.m_nec), m_nic(other.m_nic), m_nix(other.m_nix), m_c_tol(std::move(other.m_c_tol)),
+      m_has_discrete_variables(other.m_has_discrete_variables), m_has_batch_fitness(other.m_has_batch_fitness),
       m_has_gradient(other.m_has_gradient), m_has_gradient_sparsity(other.m_has_gradient_sparsity),
       m_has_hessians(other.m_has_hessians), m_has_hessians_sparsity(other.m_has_hessians_sparsity),
       m_has_set_seed(other.m_has_set_seed), m_name(std::move(other.m_name)), m_gs_dim(other.m_gs_dim),
@@ -293,11 +309,13 @@ problem &problem::operator=(problem &&other) noexcept
         m_hevals.store(other.m_hevals.load(std::memory_order_relaxed), std::memory_order_relaxed);
         m_lb = std::move(other.m_lb);
         m_ub = std::move(other.m_ub);
+        m_discrete_variables = std::move(other.m_discrete_variables);
         m_nobj = other.m_nobj;
         m_nec = other.m_nec;
         m_nic = other.m_nic;
         m_nix = other.m_nix;
         m_c_tol = std::move(other.m_c_tol);
+        m_has_discrete_variables = other.m_has_discrete_variables;
         m_has_batch_fitness = other.m_has_batch_fitness;
         m_has_gradient = other.m_has_gradient;
         m_has_gradient_sparsity = other.m_has_gradient_sparsity;
@@ -607,6 +625,18 @@ std::vector<sparsity_pattern> problem::hessians_sparsity() const
 std::pair<vector_double, vector_double> problem::get_bounds() const
 {
     return std::make_pair(m_lb, m_ub);
+}
+
+/// Discrete variables.
+/**
+ * @return \f$ (\mathbf{lb}, \mathbf{ub}) \f$, the discrete variables, as returned by
+ * the <tt>%get_discrete_variables()</tt> method of the UDP.
+ *
+ * @throws unspecified any exception thrown by memory errors in standard containers.
+ */
+std::vector<vector_double> problem::get_discrete_variables() const
+{
+    return m_discrete_variables;
 }
 
 /// Set the constraint tolerance (from a vector of doubles).
